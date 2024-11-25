@@ -27,12 +27,22 @@ MINING_STOCKS = {
 
 def load_stock_data(ticker, period='1y'):
     """Load stock data using yfinance"""
-    stock = yf.Ticker(ticker)
-    hist = stock.history(period=period)
-    return hist
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period=period)
+        if hist.empty:
+            st.warning(f"No data available for {ticker}")
+            return None
+        return hist
+    except Exception as e:
+        st.error(f"Error loading data for {ticker}: {str(e)}")
+        return None
 
 def create_stock_chart(data, company_name):
     """Create a candlestick chart using plotly"""
+    if data is None or data.empty:
+        return None
+        
     fig = go.Figure(data=[go.Candlestick(x=data.index,
                                         open=data['Open'],
                                         high=data['High'],
@@ -46,6 +56,25 @@ def create_stock_chart(data, company_name):
         template='plotly_dark'
     )
     return fig
+
+def get_safe_value(data, column, index=-1, default="N/A"):
+    """Safely get value from DataFrame with fallback"""
+    if data is None or data.empty:
+        return default
+    try:
+        return data[column][index]
+    except:
+        return default
+
+def calculate_daily_change(data):
+    """Safely calculate daily change percentage"""
+    if data is None or data.empty or len(data) < 2:
+        return "N/A"
+    try:
+        change = ((data['Close'][-1] - data['Close'][-2]) / data['Close'][-2]) * 100
+        return f"{change:.2f}%"
+    except:
+        return "N/A"
 
 def main():
     st.title("ASX Mining Stocks Tracker")
@@ -76,21 +105,31 @@ def main():
                 ticker = MINING_STOCKS[company]
                 data = load_stock_data(ticker, time_period)
                 
-                # Create and display chart
-                fig = create_stock_chart(data, company)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Display key metrics
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Current Price", f"${data['Close'][-1]:.2f}")
-                with col2:
-                    change = ((data['Close'][-1] - data['Close'][-2]) / data['Close'][-2]) * 100
-                    st.metric("Daily Change", f"{change:.2f}%")
-                with col3:
-                    st.metric("Volume", f"{data['Volume'][-1]:,.0f}")
-                with col4:
-                    st.metric("52W High", f"${data['High'].max():.2f}")
+                if data is not None and not data.empty:
+                    # Create and display chart
+                    fig = create_stock_chart(data, company)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Display key metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        current_price = get_safe_value(data, 'Close')
+                        if current_price != "N/A":
+                            current_price = f"${current_price:.2f}"
+                        st.metric("Current Price", current_price)
+                    with col2:
+                        st.metric("Daily Change", calculate_daily_change(data))
+                    with col3:
+                        volume = get_safe_value(data, 'Volume')
+                        if volume != "N/A":
+                            volume = f"{volume:,.0f}"
+                        st.metric("Volume", volume)
+                    with col4:
+                        high = get_safe_value(data, 'High', default=0)
+                        if high != "N/A":
+                            high = f"${data['High'].max():.2f}"
+                        st.metric("52W High", high)
         
         with tab2:
             # Create summary table
@@ -99,18 +138,38 @@ def main():
                 ticker = MINING_STOCKS[company]
                 data = load_stock_data(ticker, time_period)
                 
-                summary_data.append({
-                    'Company': company,
-                    'Ticker': ticker,
-                    'Current Price': f"${data['Close'][-1]:.2f}",
-                    'Daily Change %': f"{((data['Close'][-1] - data['Close'][-2]) / data['Close'][-2] * 100):.2f}%",
-                    'Volume': f"{data['Volume'][-1]:,.0f}",
-                    'Year High': f"${data['High'].max():.2f}",
-                    'Year Low': f"${data['Low'].min():.2f}"
-                })
+                if data is not None:
+                    current_price = get_safe_value(data, 'Close')
+                    if current_price != "N/A":
+                        current_price = f"${current_price:.2f}"
+                    
+                    year_high = get_safe_value(data, 'High', default=0)
+                    if year_high != "N/A":
+                        year_high = f"${data['High'].max():.2f}"
+                    
+                    year_low = get_safe_value(data, 'Low', default=0)
+                    if year_low != "N/A":
+                        year_low = f"${data['Low'].min():.2f}"
+                    
+                    volume = get_safe_value(data, 'Volume')
+                    if volume != "N/A":
+                        volume = f"{volume:,.0f}"
+                    
+                    summary_data.append({
+                        'Company': company,
+                        'Ticker': ticker,
+                        'Current Price': current_price,
+                        'Daily Change %': calculate_daily_change(data),
+                        'Volume': volume,
+                        'Year High': year_high,
+                        'Year Low': year_low
+                    })
             
-            summary_df = pd.DataFrame(summary_data)
-            st.dataframe(summary_df, use_container_width=True)
+            if summary_data:
+                summary_df = pd.DataFrame(summary_data)
+                st.dataframe(summary_df, use_container_width=True)
+            else:
+                st.warning("No data available for the selected stocks")
 
 if __name__ == "__main__":
     main()
